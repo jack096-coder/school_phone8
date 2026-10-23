@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教職員工分機語音查詢系統</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif, 'Microsoft JhengHei';
+            background-color: #f0f2f5;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;
+        }
+        .container {
+            background-color: white; border-radius: 16px; padding: 40px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center;
+            max-width: 800px; width: 100%;
+        }
+        
+        /* 麥克風與結果區 (上方) */
+        .mic-btn {
+            background-color: #007bff; color: white; border: none; border-radius: 50%;
+            width: 100px; height: 100px; font-size: 40px; cursor: pointer;
+            transition: all 0.3s ease; box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+            display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;
+        }
+        .mic-btn:hover { background-color: #0056b3; transform: scale(1.05); }
+        .mic-btn.listening { background-color: #dc3545; animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(220, 53, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+        #status { font-size: 18px; color: #444; margin-bottom: 20px; min-height: 27px; font-weight: bold; }
+        #result-container { margin-top: 20px; display: none; text-align: left; }
+        .result-item {
+            background: #f8f9fa; border-radius: 12px; padding: 20px; margin-bottom: 15px;
+            display: flex; align-items: center; justify-content: space-between;
+            border-left: 6px solid #28a745; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .person-info { font-size: 24px; color: #333; }
+        .dept-tag { font-size: 16px; color: #666; margin-bottom: 5px; }
+        .ext-number { font-size: 50px; font-weight: bold; color: #28a745; margin: 0; line-height: 1; }
+        .single-result .result-item { flex-direction: column; text-align: center; padding: 40px 20px; border-left: none; border-top: 6px solid #28a745; }
+        .single-result .person-info { font-size: 32px; margin-bottom: 20px; }
+        .single-result .ext-number { font-size: 100px; }
+        .error-msg { color: #dc3545; font-size: 20px; text-align: center; padding: 10px; }
+        .suggestion-box { text-align: center; margin-top: 15px; padding: 15px; background: #fff3cd; border-radius: 10px; border: 1px solid #ffeeba;}
+        .suggestion-btn {
+            background-color: #ffc107; border: none; padding: 10px 20px; margin: 5px;
+            border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; color: #333;
+            transition: 0.2s;
+        }
+        .suggestion-btn:hover { background-color: #e0a800; }
+
+        /* 分隔線與標題區 (下方) */
+        h1 { 
+            color: #333; font-size: 24px; margin-top: 40px; margin-bottom: 10px;
+            padding-top: 30px; border-top: 1px dashed #ccc; 
+        }
+        .db-status { font-size: 13px; color: #888; margin-bottom: 20px; }
+        p.subtitle { color: #666; margin-bottom: 30px; line-height: 1.6; font-size: 15px; }
+        
+        .action-buttons {
+            display: flex; gap: 10px; justify-content: center; margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .action-btn {
+            background-color: #28a745; color: white; border: none; padding: 10px 15px;
+            border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: bold;
+            transition: background 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .action-btn:hover { background-color: #218838; }
+        .action-btn.export { background-color: #17a2b8; }
+        .action-btn.export:hover { background-color: #138496; }
+
+    </style>
+    <!-- 引入 pinyin-pro -->
+    <script src="https://cdn.jsdelivr.net/npm/pinyin-pro@3.16.4/dist/index.js"></script>
+    <!-- 引入 SheetJS 處理 Excel 匯出與匯入 -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<div class="container">
+    
+    <!-- 核心查詢畫面置於上方 -->
+    <button id="micBtn" class="mic-btn">🎙️</button>
+    <div id="status">準備就緒，請點擊麥克風</div>
+    <div id="result-container"></div>
+
+    <!-- 其餘設定與說明畫面置於下方 -->
+    <h1>教職員工分機查詢系統</h1>
+    <div id="dbStatus" class="db-status">目前使用：預設分機表</div>
+    <p class="subtitle">
+        💡 <b>AI 記憶功能</b>：點選推薦人名後，系統會自動記住您的發音習慣！<br>
+        💡 <b>持久記憶</b>：重新匯入的資料會保存在網頁中，關閉瀏覽器也不會消失。
+    </p>
+    
+    <div class="action-buttons">
+        <input type="file" id="fileInput" accept=".xlsx, .xls" style="display: none;">
+        <button class="action-btn" onclick="document.getElementById('fileInput').click()">📥 重新匯入分機表(資料+記憶)</button>
+        <button class="action-btn export" onclick="exportExcel()">📤 匯出備份 (資料+記憶)</button>
+    </div>
+</div>
+
+<script>
+    // 預設資料庫 (內建 115學年度第1學期 分機表)
+    const defaultDatabase = [
+        { dept: "校長室", title: "校長", name: "曾河嶸", ext: "101" },
+        { dept: "校長室", title: "秘書", name: "張銘傑", ext: "107" },
+        { dept: "人事室", title: "人事主任", name: "梁士琦", ext: "702" },
+        { dept: "人事室", title: "人事組員", name: "楊茹芬", ext: "705" },
+        { dept: "主計室", title: "主計主任", name: "王怡菁", ext: "701" },
+        { dept: "主計室", title: "主計室組員", name: "鄧芳怡", ext: "703" },
+        { dept: "主計室", title: "主計佐理員", name: "陳秀釵", ext: "703" },
+        { dept: "教務處", title: "教務主任", name: "林立中", ext: "211" },
+        { dept: "教務處", title: "教學組長", name: "王一如", ext: "202" },
+        { dept: "教務處", title: "註冊組長", name: "李炫皞", ext: "205" },
+        { dept: "教務處", title: "設備組長", name: "廖晨皓", ext: "207" },
+        { dept: "教務處", title: "實驗研究組長", name: "莊碧蓮", ext: "204" },
+        { dept: "教務處", title: "試務組長", name: "蔡瓊慧", ext: "203" },
+        { dept: "教務處", title: "教學組管理員", name: "吳春輝", ext: "287" },
+        { dept: "教務處", title: "註冊組書記", name: "劉承訓", ext: "285" },
+        { dept: "教務處", title: "實研組幹事", name: "山君儀", ext: "284" },
+        { dept: "教務處", title: "試務組幹事", name: "許友智", ext: "283" },
+        { dept: "教務處", title: "教學組(代技佐)", name: "陳宛青", ext: "281" },
+        { dept: "學務處", title: "學務主任", name: "王勝美(阿美)", ext: "301" },
+        { dept: "學務處", title: "訓育組長", name: "陳裕盛", ext: "302" },
+        { dept: "學務處", title: "社團活動組長", name: "蘇醇浩", ext: "303" },
+        { dept: "學務處", title: "衛生組長", name: "蘇芳妤", ext: "304" },
+        { dept: "學務處", title: "生活輔導組長", name: "龍泳衡", ext: "307" },
+        { dept: "學務處", title: "體育組長", name: "簡添霖", ext: "306" },
+        { dept: "學務處", title: "訓育組幹事", name: "張允涓", ext: "325" },
+        { dept: "學務處", title: "護理師", name: "蘇玉漣", ext: "305" },
+        { dept: "學務處", title: "代理護理師", name: "李淑美", ext: "305" },
+        { dept: "學務處", title: "代理幹事", name: "楊惠娜", ext: "316" },
+        { dept: "學務處", title: "校安學創人員", name: "徐博仁", ext: "308" },
+        { dept: "學務處", title: "校安學創人員", name: "蘇義倫", ext: "308" },
+        { dept: "學務處", title: "校安學創人員", name: "曾宥達", ext: "308" },
+        { dept: "學務處", title: "校安學創人員", name: "戴福亨", ext: "316" },
+        { dept: "學務處", title: "校安學創人員", name: "吳素梅", ext: "308" },
+        { dept: "學務處", title: "校安學創人員", name: "陳苧瑩", ext: "308" },
+        { dept: "學務處", title: "校安學創人員", name: "謝育妏", ext: "303" },
+        { dept: "總務處", title: "總務主任", name: "陳明郎(阿郎)", ext: "401" },
+        { dept: "總務處", title: "庶務組長", name: "謝宜廷", ext: "402" },
+        { dept: "總務處", title: "文書組長", name: "林慧怜", ext: "404" },
+        { dept: "總務處", title: "財管管理員", name: "楊永明", ext: "406" },
+        { dept: "總務處", title: "出納組幹事", name: "楊馨琦", ext: "411" },
+        { dept: "總務處", title: "總務處管理員", name: "吳淨嚴", ext: "410" },
+        { dept: "總務處", title: "技工工友", name: "鐘春燕", ext: "409" },
+        { dept: "總務處", title: "技工工友", name: "劉萃(小萃)", ext: "288" },
+        { dept: "總務處", title: "守衛室", name: "守衛", ext: "408" },
+        { dept: "圖書館", title: "圖書館主任", name: "施佳伸", ext: "601" },
+        { dept: "圖書館", title: "圖書館幹事", name: "郭秀維", ext: "608" },
+        { dept: "輔導室", title: "輔導室主任", name: "張楷翎", ext: "602" },
+        { dept: "輔導室", title: "輔導老師", name: "張育菁", ext: "607" },
+        { dept: "輔導室", title: "輔導老師", name: "蘇偉茹", ext: "611" },
+        { dept: "輔導室", title: "輔導老師", name: "莊蕙慈", ext: "609" },
+        { dept: "輔導室", title: "特教", name: "許舒婷", ext: "604" },
+        { dept: "輔導室", title: "特教(代理教師)", name: "蘇慧貞", ext: "612" },
+        { dept: "實習處", title: "實習處主任", name: "蘇正任", ext: "251" },
+        { dept: "實習處", title: "實習組長", name: "譚永鈺", ext: "252" },
+        { dept: "實習處", title: "實習就業組幹事", name: "謝志宏", ext: "253" },
+        { dept: "實習處", title: "實習就業組幹事", name: "林秋月", ext: "255" },
+        { dept: "實習處", title: "電腦製圖學程主任", name: "呂彥勳", ext: "219" },
+        { dept: "實習處", title: "土木營建技術學程主任", name: "汪煒傑", ext: "213" },
+        { dept: "實習處", title: "資訊應用學程主任", name: "白雅端", ext: "218" },
+        { dept: "實習處", title: "餐飲技術學程主任", name: "李建達", ext: "212" },
+        { dept: "實習處", title: "畜產學程", name: "畜產", ext: "214" },
+        { dept: "實習處", title: "園藝休閒學程主任", name: "陳娣伶", ext: "217" },
+        { dept: "實習處", title: "食品加工學程主任", name: "蘇啓賢", ext: "216" },
+        { dept: "nan", title: "nan", name: "音樂教室", ext: "318" },
+        { dept: "nan", title: "nan", name: "物理教室", ext: "261" },
+        { dept: "nan", title: "nan", name: "護理教室", ext: "317" },
+        { dept: "nan", title: "nan", name: "美術教室", ext: "310" },
+        { dept: "nan", title: "阿民姐", name: "合作社", ext: "704" },
+        { dept: "第一辦公室", title: "數學", name: "林昇龍", ext: "311" },
+        { dept: "第一辦公室", title: "化學", name: "葉松智", ext: "311" },
+        { dept: "第一辦公室", title: "國文", name: "蔡政君", ext: "311" },
+        { dept: "第一辦公室", title: "英文", name: "蔡豐州", ext: "311" },
+        { dept: "第一辦公室", title: "國文", name: "羅麗雲", ext: "312" },
+        { dept: "第一辦公室", title: "歷史", name: "許麗鳳", ext: "312" },
+        { dept: "第一辦公室", title: "地理", name: "黃文良", ext: "312" },
+        { dept: "第一辦公室", title: "國文", name: "呂秀梅", ext: "312" },
+        { dept: "第一辦公室", title: "英文", name: "陳珮瑱", ext: "312" },
+        { dept: "第一辦公室", title: "英文", name: "李佳芬", ext: "312" },
+        { dept: "第一辦公室", title: "數學", name: "何健豪", ext: "312" },
+        { dept: "第一辦公室", title: "公民", name: "秦鳳英", ext: "313" },
+        { dept: "第一辦公室", title: "歷史", name: "郭芝嵐", ext: "313" },
+        { dept: "第一辦公室", title: "數學", name: "許萬村", ext: "313" },
+        { dept: "第一辦公室", title: "物理", name: "雷棋雄", ext: "313" },
+        { dept: "第一辦公室", title: "國文", name: "黃玉琴", ext: "313" },
+        { dept: "第一辦公室", title: "國文", name: "潘慈惠", ext: "313" },
+        { dept: "第一辦公室", title: "數學", name: "呂慶章", ext: "313" },
+        { dept: "第一辦公室", title: "化學", name: "黃家麟", ext: "313" },
+        { dept: "第一辦公室", title: "數學(代理)", name: "王少俞", ext: "314" },
+        { dept: "第一辦公室", title: "數學", name: "黃宦甄", ext: "314" },
+        { dept: "第一辦公室", title: "英文", name: "許銓議", ext: "314" },
+        { dept: "第二辦公室", title: "地理", name: "曾麗秋", ext: "321" },
+        { dept: "第二辦公室", title: "數學", name: "潘美宜", ext: "321" },
+        { dept: "第二辦公室", title: "國文", name: "陳姿伶", ext: "321" },
+        { dept: "第二辦公室", title: "英文", name: "陳彥貞", ext: "321" },
+        { dept: "第二辦公室", title: "國文", name: "毛麗英", ext: "321" },
+        { dept: "第二辦公室", title: "英文", name: "黃建銘", ext: "321" },
+        { dept: "第二辦公室", title: "生物", name: "周虹君", ext: "321" },
+        { dept: "第二辦公室", title: "英文(兼)", name: "林君芳", ext: "321" },
+        { dept: "第二辦公室", title: "英文(代理)", name: "黃懷萱", ext: "321" },
+        { dept: "第二辦公室", title: "數學(代理)", name: "程秀莉", ext: "321" },
+        { dept: "第二辦公室", title: "化學", name: "葉玟蘭", ext: "324" },
+        { dept: "第二辦公室", title: "英文", name: "張依涵", ext: "324" },
+        { dept: "第二辦公室", title: "英文", name: "李芳儀", ext: "324" },
+        { dept: "第二辦公室", title: "公民(代理)", name: "郭美嬬", ext: "324" },
+        { dept: "第二辦公室", title: "國文(代理)", name: "蔡詠齊", ext: "324" },
+        { dept: "第二辦公室", title: "國文", name: "陳英梅", ext: "324" },
+        { dept: "第二辦公室", title: "生物(代理)", name: "林郁潔", ext: "324" },
+        { dept: "第二辦公室", title: "數學", name: "林政佑", ext: "324" },
+        { dept: "第二辦公室", title: "數學", name: "藍紹順", ext: "324" },
+        { dept: "第二辦公室", title: "國文", name: "賴怡君", ext: "324" },
+        { dept: "第二辦公室", title: "地科(代理)", name: "林秀貞", ext: "324" },
+        { dept: "第三辦公室", title: "英文", name: "柯菁青", ext: "222" },
+        { dept: "第三辦公室", title: "數學", name: "王廷朝", ext: "222" },
+        { dept: "第三辦公室", title: "歷史", name: "黃惠瑞", ext: "222" },
+        { dept: "第三辦公室", title: "物理", name: "戴振堯", ext: "222" },
+        { dept: "第三辦公室", title: "護理", name: "陳玫如", ext: "317" },
+        { dept: "第三辦公室", title: "數學", name: "邱國忠", ext: "222" },
+        { dept: "第三辦公室", title: "國防", name: "戴世煌", ext: "222" },
+        { dept: "第三辦公室", title: "地理", name: "陳元修", ext: "222" },
+        { dept: "第三辦公室", title: "公民", name: "張維倫", ext: "222" },
+        { dept: "第三辦公室", title: "國文", name: "許君如", ext: "222" },
+        { dept: "第三辦公室", title: "國文", name: "李宜芳", ext: "222" },
+        { dept: "第三辦公室", title: "生物", name: "楊于萱", ext: "222" },
+        { dept: "第三辦公室", title: "英文", name: "鍾風雅", ext: "222" },
+        { dept: "第三辦公室", title: "英文", name: "吳宛倫", ext: "222" },
+        { dept: "第三辦公室", title: "數學", name: "戴鴻志", ext: "222" },
+        { dept: "第三辦公室", title: "數學", name: "陳俊龍", ext: "222" },
+        { dept: "第三辦公室", title: "國文", name: "陳芩姻", ext: "222" }
+    ];
+
+    // 初始化：優先讀取記憶體中的分機表，若無則使用預設
+    let database = JSON.parse(localStorage.getItem('ext_database')) || defaultDatabase;
+    let learnedMemory = JSON.parse(localStorage.getItem('ext_voice_memory')) || {};
+
+    const micBtn = document.getElementById('micBtn');
+    const statusDiv = document.getElementById('status');
+    const dbStatusDiv = document.getElementById('dbStatus');
+    const resultContainer = document.getElementById('result-container');
+    const fileInput = document.getElementById('fileInput');
+    const { pinyin } = pinyinPro;
+    
+    function updateDbStatus() {
+        const isCustom = localStorage.getItem('ext_database') !== null;
+        dbStatusDiv.textContent = isCustom ? `目前使用：已匯入的自訂分機表 (共 ${database.length} 筆)` : `目前使用：預設分機表 (共 ${database.length} 筆)`;
+    }
+    updateDbStatus();
+
+    window.exportExcel = function() {
+        const mainData = database.map(item => ({
+            '處室': item.dept,
+            '職稱': item.title,
+            '姓名': item.name,
+            '分機': item.ext
+        }));
+
+        const memoryData = Object.keys(learnedMemory).map(key => ({
+            '辨識錯誤語音': key,
+            '對應正確姓名': learnedMemory[key]
+        }));
+
+        const wb = XLSX.utils.book_new();
+        const wsMain = XLSX.utils.json_to_sheet(mainData);
+        XLSX.utils.book_append_sheet(wb, wsMain, "分機表");
+        
+        const wsMemory = XLSX.utils.json_to_sheet(memoryData.length > 0 ? memoryData : [{'辨識錯誤語音': '', '對應正確姓名': ''}]);
+        XLSX.utils.book_append_sheet(wb, wsMemory, "語音學習記憶");
+        
+        XLSX.writeFile(wb, "教職員工分機及語音學習備份.xlsx");
+        statusDiv.textContent = '✅ 已成功匯出備份檔案！';
+    };
+
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const data = new Uint8Array(event.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                const rawJson = XLSX.utils.sheet_to_json(worksheet);
+                
+                let newDatabase = [];
+                rawJson.forEach(row => {
+                    const dName = row['姓名'] || row['Name'] || '';
+                    const dExt = String(row['分機'] || row['Ext'] || '');
+                    if (dName && dExt) {
+                        newDatabase.push({
+                            dept: row['處室'] || row['Dept'] || '',
+                            title: row['職稱'] || row['Title'] || '',
+                            name: dName,
+                            ext: dExt
+                        });
+                    }
+                });
+
+                if (newDatabase.length > 0) {
+                    database = newDatabase;
+                    localStorage.setItem('ext_database', JSON.stringify(database));
+                }
+
+                if (workbook.SheetNames.includes("語音學習記憶")) {
+                    const memSheet = workbook.Sheets["語音學習記憶"];
+                    const memJson = XLSX.utils.sheet_to_json(memSheet);
+                    memJson.forEach(row => {
+                        const wrong = row['辨識錯誤語音'];
+                        const correct = row['對應正確姓名'];
+                        if (wrong && correct) { 
+                            learnedMemory[wrong] = correct; 
+                        }
+                    });
+                    localStorage.setItem('ext_voice_memory', JSON.stringify(learnedMemory));
+                }
+
+                updateDbStatus();
+                statusDiv.textContent = `✅ 匯入成功！已更新 ${database.length} 筆分機與 ${Object.keys(learnedMemory).length} 筆學習記憶。`;
+            } catch (error) {
+                console.error(error);
+                statusDiv.textContent = '❌ 匯入失敗，請確認檔案格式是否正確。';
+            }
+            fileInput.value = '';
+        };
+        reader.readAsArrayBuffer(file);
+    });
+    
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition;
+
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'zh-TW';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = function() {
+            micBtn.classList.add('listening');
+            statusDiv.textContent = '聆聽中...請說話';
+            resultContainer.style.display = 'none';
+        };
+
+        recognition.onresult = function(event) {
+            const transcript = event.results[0][0].transcript.replace(/\s+/g, '');
+            statusDiv.textContent = `您說了：「${transcript}」`;
+            searchDatabase(transcript);
+        };
+
+        recognition.onerror = function(event) {
+            statusDiv.textContent = '發生錯誤，請再試一次。';
+            micBtn.classList.remove('listening');
+        };
+
+        recognition.onend = function() {
+            micBtn.classList.remove('listening');
+        };
+
+        micBtn.addEventListener('click', () => { recognition.start(); });
+    } else {
+        statusDiv.textContent = '不支援語音辨識，請使用 Chrome 瀏覽器。';
+        micBtn.disabled = true;
+    }
+
+    function levenshteinDistance(a, b) {
+        if(a.length == 0) return b.length; 
+        if(b.length == 0) return a.length; 
+        var matrix = [];
+        for(var i = 0; i <= b.length; i++){ matrix[i] = [i]; }
+        for(var j = 0; j <= a.length; j++){ matrix[0][j] = j; }
+        for(var i = 1; i <= b.length; i++){
+            for(var j = 1; j <= a.length; j++){
+                if(b.charAt(i-1) == a.charAt(j-1)){
+                    matrix[i][j] = matrix[i-1][j-1];
+                } else {
+                    matrix[i][j] = Math.min(matrix[i-1][j-1] + 1, Math.min(matrix[i][j-1] + 1, matrix[i-1][j] + 1));
+                }
+            }
+        }
+        return matrix[b.length][a.length];
+    }
+
+    window.learnAndSearch = function(wrongQuery, correctName) {
+        learnedMemory[wrongQuery] = correctName;
+        localStorage.setItem('ext_voice_memory', JSON.stringify(learnedMemory));
+        statusDiv.textContent = `已記住：「${wrongQuery}」對應為「${correctName}」`;
+        searchDatabase(correctName, true); 
+    };
+
+    function searchDatabase(query, isExact = false) {
+        query = query.trim();
+        if (!query) return;
+
+        if (!isExact && learnedMemory[query]) {
+            query = learnedMemory[query];
+        }
+
+        let results = [];
+        const depts = [...new Set(database.map(item => item.dept))];
+        const targetDept = depts.find(d => query === d || (query.length >= 2 && d.startsWith(query) && query.length <= d.length));
+        const queryPinyin = pinyin(query, { toneType: 'none', type: 'array' }).join('');
+
+        if (targetDept) {
+            results = database.filter(item => item.dept === targetDept);
+        } else {
+            results = database.filter(item => {
+                if (item.name === query) return true; 
+                
+                const searchPool = item.dept + item.title + item.name;
+                if (searchPool.includes(query)) return true;
+                if (query.length === 2 && item.name.length === 3 && query[0] === item.name[0] && query[1] === item.name[2]) return true;
+                
+                let allCharsMatch = true;
+                for (let char of query) { if (!searchPool.includes(char)) { allCharsMatch = false; break; } }
+                if (allCharsMatch) return true;
+
+                const namePinyin = pinyin(item.name, { toneType: 'none', type: 'array' }).join('');
+                if (namePinyin.includes(queryPinyin)) return true;
+
+                return false;
+            });
+        }
+
+        displayResults(results, query, targetDept);
+    }
+
+    function displayResults(results, originalQuery, targetDept) {
+        resultContainer.style.display = 'block';
+        resultContainer.innerHTML = '';
+        resultContainer.className = '';
+
+        if (results.length === 0) {
+            let suggestions = database.map(item => {
+                const namePinyin = pinyin(item.name, { toneType: 'none', type: 'array' }).join('');
+                const queryPinyin = pinyin(originalQuery, { toneType: 'none', type: 'array' }).join('');
+                const charDist = levenshteinDistance(originalQuery, item.name);
+                const pinyinDist = levenshteinDistance(queryPinyin, namePinyin);
+                return { ...item, score: charDist * 2 + pinyinDist };
+            });
+
+            suggestions.sort((a, b) => a.score - b.score);
+            let topSuggestions = suggestions.slice(0, 3);
+
+            let errorHtml = `<div class="error-msg">找不到與「${originalQuery}」相符的分機</div>`;
+            errorHtml += `<div class="suggestion-box"><p>您是不是要找：</p>`;
+            topSuggestions.forEach(s => {
+                errorHtml += `<button class="suggestion-btn" onclick="learnAndSearch('${originalQuery}', '${s.name}')">${s.dept} - ${s.name}</button>`;
+            });
+            errorHtml += `</div>`;
+            
+            resultContainer.innerHTML = errorHtml;
+            speakOut(`找不到`);
+            return;
+        }
+
+        if (results.length === 1) resultContainer.classList.add('single-result');
+
+        results.forEach(person => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'result-item';
+            itemDiv.innerHTML = `
+                <div>
+                    <div class="dept-tag">${person.dept}</div>
+                    <div class="person-info">${person.title} <strong>${person.name}</strong></div>
+                </div>
+                <div class="ext-number">${person.ext}</div>
+            `;
+            resultContainer.appendChild(itemDiv);
+        });
+
+        // 語音播報邏輯調整
+        if (targetDept) {
+            speakOut(`已為您列出${targetDept}的所有分機。`);
+        } else if (results.length === 1) {
+            // 只有一位結果時，將數字拆開唸，並且去除「分機」兩個字
+            const extSpoken = results[0].ext.split('').join(' ');
+            speakOut(extSpoken);
+        } else {
+            // 列出多人時，不唸出分機號碼
+            speakOut('已為您列出多筆相符資料。');
+        }
+    }
+
+    function speakOut(text) {
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            const msg = new SpeechSynthesisUtterance(text);
+            msg.lang = 'zh-TW';
+            msg.rate = 0.95;
+            window.speechSynthesis.speak(msg);
+        }
+    }
+</script>
+</body>
+</html>
